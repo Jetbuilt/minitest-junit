@@ -53,20 +53,30 @@ module Minitest
         doc = @doc.document
 
         testsuites = @doc.element('testsuites')
-        testsuite = @doc.element('testsuite')
-        @doc.set_attr(testsuite, 'name', @options[:name] || 'minitest')
-        @doc.set_attr(testsuite, 'timestamp', @options[:timestamp])
-        @doc.set_attr(testsuite, 'hostname', @options[:hostname])
-        @doc.set_attr(testsuite, 'tests', @results.size)
-        @doc.set_attr(testsuite, 'skipped', @results.count(&:skipped?))
-        @doc.set_attr(testsuite, 'failures', @results.count { |result| !result.error? && result.failure })
-        @doc.set_attr(testsuite, 'errors', @results.count(&:error?))
-        @doc.set_attr(testsuite, 'time', format_time(@results.map(&:time).inject(0, :+)))
-        @results.each do |result|
-          @doc.add_child(testsuite, format(result))
+        @doc.set_attr(testsuites, 'name', @options[:name] || 'minitest')
+        @doc.set_attr(testsuites, 'tests', @results.size)
+        @doc.set_attr(testsuites, 'skipped', @results.count(&:skipped?))
+        @doc.set_attr(testsuites, 'failures', @results.count { |result| !result.error? && result.failure })
+        @doc.set_attr(testsuites, 'errors', @results.count(&:error?))
+        @doc.set_attr(testsuites, 'time', format_time(@results.map(&:time).inject(0, :+)))
+
+        grouped = @results.group_by { |result| format_file(result) }
+        grouped.each do |file, results|
+          testsuite = @doc.element('testsuite')
+          @doc.set_attr(testsuite, 'name', file)
+          @doc.set_attr(testsuite, 'timestamp', @options[:timestamp])
+          @doc.set_attr(testsuite, 'hostname', @options[:hostname])
+          @doc.set_attr(testsuite, 'tests', results.size)
+          @doc.set_attr(testsuite, 'skipped', results.count(&:skipped?))
+          @doc.set_attr(testsuite, 'failures', results.count { |result| !result.error? && result.failure })
+          @doc.set_attr(testsuite, 'errors', results.count(&:error?))
+          @doc.set_attr(testsuite, 'time', format_time(results.map(&:time).inject(0, :+)))
+          results.each do |result|
+            @doc.add_child(testsuite, format(result))
+          end
+          @doc.add_child(testsuites, testsuite)
         end
 
-        @doc.add_child(testsuites, testsuite)
         @doc.add_child(doc, testsuites)
         @io << @doc.dump(doc)
       end
@@ -131,11 +141,16 @@ module Minitest
         end.join("\n")
       end
 
+      def format_file(result)
+        relative_to_cwd(result.source_location.first).sub(%r{\A\./}, "")
+      end
+
       def format_class(result)
         if @options[:junit_jenkins]
           result.klass.to_s.gsub(/(.*)::(.*)/, '\1.\2')
         else
-          result.klass
+          fp = relative_to_cwd(result.source_location.first)
+          fp.sub(%r{\.[^/]*\Z}, "").gsub("/", ".").gsub(%r{\A\.+|\.+\Z}, "")
         end
       end
 

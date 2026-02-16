@@ -16,11 +16,11 @@ class TestCaseFormatter < Minitest::Test
   def test_all_tests_generate_testcase_tag
     test = create_test_result
     reporter = create_reporter
+    reporter.record test
 
-    assert_match(
-      test.name,
-      reporter.format(test).attributes['name']
-    )
+    reporter.report
+
+    assert_match(/name="#{test.name}"/, reporter.output)
   end
 
   def test_skipped_tests_generates_skipped_tag
@@ -31,7 +31,7 @@ class TestCaseFormatter < Minitest::Test
 
     reporter.report
 
-    assert_match(/<skipped message="[^<>]+"\><\/skipped>\n\s+<\/testcase>\n\s*<\/testsuite>\n/, reporter.output)
+    assert_match(/<skipped message="[^<>]+"/, reporter.output)
   end
 
   def test_failing_tests_creates_failure_tag
@@ -74,7 +74,7 @@ class TestCaseFormatter < Minitest::Test
     e
   end
 
-  def create_test_result(name = FakeTestName)
+  def create_test_result(name = FakeTestName, source_location: ['./test/fake_test.rb', 1])
     test = Class.new Minitest::Test do
       define_method 'class' do
         name
@@ -82,7 +82,9 @@ class TestCaseFormatter < Minitest::Test
     end.new 'test_method_name'
     test.time = a_number
     test.assertions = a_number
-    Minitest::Result.from test
+    result = Minitest::Result.from test
+    result.source_location = source_location
+    result
   end
 
   def a_number

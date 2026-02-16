@@ -14,7 +14,7 @@ class ReporterTest < Minitest::Test
     reporter.report
 
     assert_match(
-      %r{<?xml version="1.0" encoding="UTF-8"\?>\n<testsuites>\n  <testsuite name="minitest" timestamp="[^"]+" hostname="[^"]+" tests="0" skipped="0" failures="0" errors="0" time="0.000000"\/>\n<\/testsuites>\n},
+      %r{<?xml version="1.0" encoding="UTF-8"\?>\n<testsuites name="minitest" tests="0" skipped="0" failures="0" errors="0" time="0.000000"\/>\n},
       reporter.output
     )
   end
@@ -25,6 +25,7 @@ class ReporterTest < Minitest::Test
     file = File.new('test/tmp/report.xml', 'w:UTF-8')
     reporter = Minitest::Junit::Reporter.new file, { hostname: '‹foo›' }
     reporter.start
+    reporter.record create_test_result
     reporter.report
     file.close
 
@@ -37,7 +38,7 @@ class ReporterTest < Minitest::Test
     results = do_formatting_test(reporter, count: rand(100), cause_failures: 0)
 
     results.each do |result|
-      assert_match("<testcase classname=\"FakeTestName\" name=\"#{result.name}\"", reporter.output)
+      assert_match("<testcase classname=\"test.fake_test\" name=\"#{result.name}\"", reporter.output)
     end
   end
 
@@ -61,8 +62,8 @@ class ReporterTest < Minitest::Test
     example_node = parsed_report.xpath("//testcase").first
     assert example_node.has_attribute?('file')
     assert example_node.has_attribute?('line')
-    assert_equal 'unknown', example_node.attribute('file').value
-    assert_equal '-1', example_node.attribute('line').value
+    assert_equal './test/fake_test.rb', example_node.attribute('file').value
+    assert_equal '1', example_node.attribute('line').value
   end
 
   private
@@ -79,7 +80,7 @@ class ReporterTest < Minitest::Test
     results
   end
 
-  def create_test_result(name: FakeTestName, methodname: 'test_method_name', successes: 1, failures: 0)
+  def create_test_result(name: FakeTestName, methodname: 'test_method_name', successes: 1, failures: 0, source_location: ['./test/fake_test.rb', 1])
     test = Class.new Minitest::Test do
       define_method 'class' do
         name
@@ -99,7 +100,9 @@ class ReporterTest < Minitest::Test
       test.metadata[:failure_screenshot_path] = '/tmp/screenshot.png'
     end
 
-    Minitest::Result.from test
+    result = Minitest::Result.from test
+    result.source_location = source_location
+    result
   end
 
   def create_reporter(options = {})
