@@ -34,21 +34,30 @@ module Minitest
         instruct[:encoding] = 'UTF-8'
         doc << instruct
 
-        testsuite = Ox::Element.new('testsuite')
-        testsuite['name'] = @options[:name] || 'minitest'
-        testsuite['timestamp'] = @options[:timestamp]
-        testsuite['hostname'] = @options[:hostname]
-        testsuite['tests'] = @results.size
-        testsuite['skipped'] = @results.count(&:skipped?)
-        testsuite['failures'] = @results.count { |result| !result.error? && result.failure }
-        testsuite['errors'] = @results.count(&:error?)
-        testsuite['time'] = format_time(@results.map(&:time).inject(0, :+))
-        @results.each do |result|
-          testsuite << format(result)
-        end
-
         testsuites = Ox::Element.new('testsuites')
-        testsuites << testsuite
+        testsuites['name'] = @options[:name] || 'minitest'
+        testsuites['tests'] = @results.size
+        testsuites['skipped'] = @results.count(&:skipped?)
+        testsuites['failures'] = @results.count { |result| !result.error? && result.failure }
+        testsuites['errors'] = @results.count(&:error?)
+        testsuites['time'] = format_time(@results.map(&:time).inject(0, :+))
+
+        grouped = @results.group_by { |result| format_file(result) }
+        grouped.each do |file, results|
+          testsuite = Ox::Element.new('testsuite')
+          testsuite['name'] = file
+          testsuite['timestamp'] = @options[:timestamp]
+          testsuite['hostname'] = @options[:hostname]
+          testsuite['tests'] = results.size
+          testsuite['skipped'] = results.count(&:skipped?)
+          testsuite['failures'] = results.count { |result| !result.error? && result.failure }
+          testsuite['errors'] = results.count(&:error?)
+          testsuite['time'] = format_time(results.map(&:time).inject(0, :+))
+          results.each do |result|
+            testsuite << format(result)
+          end
+          testsuites << testsuite
+        end
 
         doc << testsuites
         @io << Ox.dump(doc)
@@ -114,11 +123,16 @@ module Minitest
         end.join("\n")
       end
 
+      def format_file(result)
+        relative_to_cwd(result.source_location.first).sub(%r{\A\./}, "")
+      end
+
       def format_class(result)
         if @options[:junit_jenkins]
           result.klass.to_s.gsub(/(.*)::(.*)/, '\1.\2')
         else
-          result.klass
+          fp = relative_to_cwd(result.source_location.first)
+          fp.sub(%r{\.[^/]*\Z}, "").gsub("/", ".").gsub(%r{\A\.+|\.+\Z}, "")
         end
       end
 

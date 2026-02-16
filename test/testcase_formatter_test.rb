@@ -74,7 +74,7 @@ class TestCaseFormatter < Minitest::Test
     e
   end
 
-  def create_test_result(name = FakeTestName)
+  def create_test_result(name = FakeTestName, source_location: ['./test/fake_test.rb', 1])
     test = Class.new Minitest::Test do
       define_method 'class' do
         name
@@ -82,7 +82,9 @@ class TestCaseFormatter < Minitest::Test
     end.new 'test_method_name'
     test.time = a_number
     test.assertions = a_number
-    Minitest::Result.from test
+    result = Minitest::Result.from test
+    result.source_location = source_location
+    result
   end
 
   def a_number
