@@ -3,32 +3,42 @@ require 'stringio'
 require 'time'
 require 'nokogiri'
 
+require 'ox'
+require 'rexml/document'
 require 'minitest/junit'
+require 'minitest/junit/xml_ox'
+require 'minitest/junit/xml_nokogiri'
+require 'minitest/junit/xml_rexml'
 
 class FakeTestName; end
 
-class ReporterTest < Minitest::Test
+module ReporterTests
   def test_no_tests_generates_an_empty_suite
     reporter = create_reporter
-
     reporter.report
 
-    assert_match(
-      %r{<?xml version="1.0" encoding="UTF-8"\?>\n<testsuites>\n  <testsuite name="minitest" timestamp="[^"]+" hostname="[^"]+" tests="0" skipped="0" failures="0" errors="0" time="0.000000"\/>\n<\/testsuites>\n},
-      reporter.output
-    )
+    parsed = Nokogiri::XML(reporter.output)
+    testsuite = parsed.at_xpath('//testsuite')
+    assert_equal 'minitest', testsuite['name']
+    assert testsuite['timestamp']
+    assert testsuite['hostname']
+    assert_equal '0', testsuite['tests']
+    assert_equal '0', testsuite['skipped']
+    assert_equal '0', testsuite['failures']
+    assert_equal '0', testsuite['errors']
+    assert_equal '0.000000', testsuite['time']
   end
 
   # NOTE: This test will generate a temp file: "test/tmp/report.xml"
   def test_encoding
-    # Enforce File.external_encoding to UTF-8 to ensure that ASCII character will be correctly converted to UTF-8
     file = File.new('test/tmp/report.xml', 'w:UTF-8')
-    reporter = Minitest::Junit::Reporter.new file, { hostname: '‹foo›' }
+    reporter = Minitest::Junit::Reporter.new file, { hostname: '‹foo›', document_class: document_class }
     reporter.start
     reporter.report
     file.close
 
-    assert_match(/hostname="‹foo›"/, File.new('test/tmp/report.xml', 'r:UTF-8').read)
+    parsed = Nokogiri::XML(File.read('test/tmp/report.xml'))
+    assert_equal '‹foo›', parsed.at_xpath('//testsuite')['hostname']
   end
 
   def test_formats_each_successful_result_with_a_formatter
@@ -36,8 +46,11 @@ class ReporterTest < Minitest::Test
 
     results = do_formatting_test(reporter, count: rand(100), cause_failures: 0)
 
+    parsed = Nokogiri::XML(reporter.output)
     results.each do |result|
-      assert_match("<testcase classname=\"FakeTestName\" name=\"#{result.name}\"", reporter.output)
+      node = parsed.at_xpath("//testcase[@name='#{result.name}']")
+      assert node, "Expected testcase with name #{result.name}"
+      assert_equal 'FakeTestName', node['classname']
     end
   end
 
@@ -45,27 +58,30 @@ class ReporterTest < Minitest::Test
     reporter = create_reporter
 
     results = do_formatting_test(reporter, count: rand(100), cause_failures: 1)
-    parsed_report = Nokogiri::XML(reporter.output)
+    parsed = Nokogiri::XML(reporter.output)
     results.each do |result|
-      parsed_report.xpath("//testcase[@name='#{result.name}']").any?
+      assert parsed.at_xpath("//testcase[@name='#{result.name}']")
     end
-    # Check if some testcase has a failure and screenshot path
-    assert parsed_report.xpath("//testcase//failure").any?
-    assert parsed_report.xpath("//testcase//system-out").any?
+    assert parsed.xpath("//testcase//failure").any?
+    assert parsed.xpath("//testcase//system-out").any?
   end
 
   def test_xml_nodes_has_file_and_line_attributes
     reporter = create_reporter
     results = do_formatting_test(reporter, count: 2, cause_failures: 1)
-    parsed_report = Nokogiri::XML(reporter.output)
-    example_node = parsed_report.xpath("//testcase").first
+    parsed = Nokogiri::XML(reporter.output)
+    example_node = parsed.xpath("//testcase").first
     assert example_node.has_attribute?('file')
     assert example_node.has_attribute?('line')
-    assert_equal 'unknown', example_node.attribute('file').value
-    assert_equal '-1', example_node.attribute('line').value
+    assert_equal 'unknown', example_node['file']
+    assert_equal '-1', example_node['line']
   end
 
   private
+
+  def document_class
+    self.class::DOCUMENT_CLASS
+  end
 
   def do_formatting_test(reporter, count: 1, cause_failures: 0)
     results = count.times.map do |i|
@@ -103,12 +119,27 @@ class ReporterTest < Minitest::Test
   end
 
   def create_reporter(options = {})
-    io = StringIO.new ''
-    reporter = Minitest::Junit::Reporter.new io, options
+    io = StringIO.new
+    reporter = Minitest::Junit::Reporter.new io, options.merge(document_class: document_class)
     def reporter.output
       @io.string
     end
     reporter.start
     reporter
   end
+end
+
+class ReporterTestOx < Minitest::Test
+  DOCUMENT_CLASS = Minitest::Junit::OxDocument
+  include ReporterTests
+end
+
+class ReporterTestNokogiri < Minitest::Test
+  DOCUMENT_CLASS = Minitest::Junit::NokogiriDocument
+  include ReporterTests
+end
+
+class ReporterTestRexml < Minitest::Test
+  DOCUMENT_CLASS = Minitest::Junit::RexmlDocument
+  include ReporterTests
 end

@@ -1,8 +1,14 @@
 require 'minitest/autorun'
 require 'stringio'
 require 'time'
+require 'nokogiri'
 
+require 'ox'
+require 'rexml/document'
 require 'minitest/junit'
+require 'minitest/junit/xml_ox'
+require 'minitest/junit/xml_nokogiri'
+require 'minitest/junit/xml_rexml'
 
 class FakeTestName; end
 
@@ -12,15 +18,16 @@ module FirstModule
   end
 end
 
-class TestCaseFormatter < Minitest::Test
+module TestCaseFormatterTests
   def test_all_tests_generate_testcase_tag
     test = create_test_result
     reporter = create_reporter
+    reporter.record test
+    reporter.report
 
-    assert_match(
-      test.name,
-      reporter.format(test).attributes['name']
-    )
+    parsed = Nokogiri::XML(reporter.output)
+    node = parsed.at_xpath("//testcase")
+    assert_equal test.name, node['name']
   end
 
   def test_skipped_tests_generates_skipped_tag
@@ -28,10 +35,12 @@ class TestCaseFormatter < Minitest::Test
     test.failures << create_error(Minitest::Skip)
     reporter = create_reporter
     reporter.record test
-
     reporter.report
 
-    assert_match(/<skipped message="[^<>]+"\><\/skipped>\n\s+<\/testcase>\n\s*<\/testsuite>\n/, reporter.output)
+    parsed = Nokogiri::XML(reporter.output)
+    skipped = parsed.at_xpath("//testcase/skipped")
+    assert skipped, "Expected skipped tag"
+    assert skipped['message']
   end
 
   def test_failing_tests_creates_failure_tag
@@ -39,10 +48,10 @@ class TestCaseFormatter < Minitest::Test
     test.failures << create_error(Minitest::Assertion)
     reporter = create_reporter
     reporter.record test
-
     reporter.report
 
-    assert_match(/<failure/, reporter.output)
+    parsed = Nokogiri::XML(reporter.output)
+    assert parsed.at_xpath("//testcase/failure")
   end
 
   def test_other_errors_generates_error_tag
@@ -50,23 +59,28 @@ class TestCaseFormatter < Minitest::Test
     test.failures << Minitest::UnexpectedError.new(create_error(Exception))
     reporter = create_reporter
     reporter.record test
-
     reporter.report
 
-    assert_match(/<error/, reporter.output)
+    parsed = Nokogiri::XML(reporter.output)
+    assert parsed.at_xpath("//testcase/error")
   end
 
   def test_jenkins_sanitizer_uses_modules_as_packages
     test = create_test_result FirstModule::SecondModule::TestClass
     reporter = create_reporter junit_jenkins: true
     reporter.record test
-
     reporter.report
 
-    assert_match 'FirstModule::SecondModule.TestClass', reporter.output
+    parsed = Nokogiri::XML(reporter.output)
+    node = parsed.at_xpath("//testcase")
+    assert_equal 'FirstModule::SecondModule.TestClass', node['classname']
   end
 
   private
+
+  def document_class
+    self.class::DOCUMENT_CLASS
+  end
 
   def create_error(klass)
     fail klass, "A #{klass} failure"
@@ -90,12 +104,27 @@ class TestCaseFormatter < Minitest::Test
   end
 
   def create_reporter(options = {})
-    io = StringIO.new ''
-    reporter = Minitest::Junit::Reporter.new io, options
+    io = StringIO.new
+    reporter = Minitest::Junit::Reporter.new io, options.merge(document_class: document_class)
     def reporter.output
       @io.string
     end
     reporter.start
     reporter
   end
+end
+
+class TestCaseFormatterOx < Minitest::Test
+  DOCUMENT_CLASS = Minitest::Junit::OxDocument
+  include TestCaseFormatterTests
+end
+
+class TestCaseFormatterNokogiri < Minitest::Test
+  DOCUMENT_CLASS = Minitest::Junit::NokogiriDocument
+  include TestCaseFormatterTests
+end
+
+class TestCaseFormatterRexml < Minitest::Test
+  DOCUMENT_CLASS = Minitest::Junit::RexmlDocument
+  include TestCaseFormatterTests
 end

@@ -1,12 +1,33 @@
 require 'minitest/junit/version'
 require 'minitest'
-require 'ox'
 require 'socket'
 require 'time'
+
+# XML backend: Ox (fastest) > Nokogiri (fast) > REXML (stdlib fallback).
+begin
+  require 'ox'
+  require 'minitest/junit/xml_ox'
+rescue LoadError
+  begin
+    require 'nokogiri'
+    require 'minitest/junit/xml_nokogiri'
+  rescue LoadError
+    require 'rexml/document'
+    require 'minitest/junit/xml_rexml'
+  end
+end
 
 # :nodoc:
 module Minitest
   module Junit
+    Document = if defined?(Ox)
+                 OxDocument
+               elsif defined?(Nokogiri)
+                 NokogiriDocument
+               else
+                 RexmlDocument
+               end
+
     # :nodoc:
     class Reporter
       def initialize(io, options)
@@ -15,6 +36,7 @@ module Minitest
         @options = options
         @options[:timestamp] = options.fetch(:timestamp, Time.now.iso8601)
         @options[:hostname] = options.fetch(:hostname, Socket.gethostname)
+        @doc = (options.delete(:document_class) || Document).new
       end
 
       def passed?
@@ -28,52 +50,47 @@ module Minitest
       end
 
       def report
-        doc = Ox::Document.new(version: '1.0', encoding: 'UTF-8')
-        instruct = Ox::Instruct.new(:xml)
-        instruct[:version] = '1.0'
-        instruct[:encoding] = 'UTF-8'
-        doc << instruct
+        doc = @doc.document
 
-        testsuite = Ox::Element.new('testsuite')
-        testsuite['name'] = @options[:name] || 'minitest'
-        testsuite['timestamp'] = @options[:timestamp]
-        testsuite['hostname'] = @options[:hostname]
-        testsuite['tests'] = @results.size
-        testsuite['skipped'] = @results.count(&:skipped?)
-        testsuite['failures'] = @results.count { |result| !result.error? && result.failure }
-        testsuite['errors'] = @results.count(&:error?)
-        testsuite['time'] = format_time(@results.map(&:time).inject(0, :+))
+        testsuites = @doc.element('testsuites')
+        testsuite = @doc.element('testsuite')
+        @doc.set_attr(testsuite, 'name', @options[:name] || 'minitest')
+        @doc.set_attr(testsuite, 'timestamp', @options[:timestamp])
+        @doc.set_attr(testsuite, 'hostname', @options[:hostname])
+        @doc.set_attr(testsuite, 'tests', @results.size)
+        @doc.set_attr(testsuite, 'skipped', @results.count(&:skipped?))
+        @doc.set_attr(testsuite, 'failures', @results.count { |result| !result.error? && result.failure })
+        @doc.set_attr(testsuite, 'errors', @results.count(&:error?))
+        @doc.set_attr(testsuite, 'time', format_time(@results.map(&:time).inject(0, :+)))
         @results.each do |result|
-          testsuite << format(result)
+          @doc.add_child(testsuite, format(result))
         end
 
-        testsuites = Ox::Element.new('testsuites')
-        testsuites << testsuite
-
-        doc << testsuites
-        @io << Ox.dump(doc)
+        @doc.add_child(testsuites, testsuite)
+        @doc.add_child(doc, testsuites)
+        @io << @doc.dump(doc)
       end
 
       def format(result, parent = nil)
-        testcase = Ox::Element.new('testcase')
-        testcase['classname'] = format_class(result)
-        testcase['name'] = format_name(result)
-        testcase['time'] = format_time(result.time)
-        testcase['file'] = relative_to_cwd(result.source_location.first)
-        testcase['line'] = result.source_location.last
-        testcase['assertions'] = result.assertions
+        testcase = @doc.element('testcase')
+        @doc.set_attr(testcase, 'classname', format_class(result))
+        @doc.set_attr(testcase, 'name', format_name(result))
+        @doc.set_attr(testcase, 'time', format_time(result.time))
+        @doc.set_attr(testcase, 'file', relative_to_cwd(result.source_location.first))
+        @doc.set_attr(testcase, 'line', result.source_location.last)
+        @doc.set_attr(testcase, 'assertions', result.assertions)
 
         if result.skipped?
-          skipped = Ox::Element.new('skipped')
-          skipped['message'] = result
-          skipped << ""
-          testcase << skipped
+          skipped = @doc.element('skipped')
+          @doc.set_attr(skipped, 'message', result)
+          @doc.add_text(skipped, '')
+          @doc.add_child(testcase, skipped)
         else
           result.failures.each do |failure|
-            failure_tag = Ox::Element.new(classify(failure))
-            failure_tag['message'] = result
-            failure_tag << format_backtrace(failure)
-            testcase << failure_tag
+            failure_tag = @doc.element(classify(failure))
+            @doc.set_attr(failure_tag, 'message', result)
+            @doc.add_text(failure_tag, format_backtrace(failure))
+            @doc.add_child(testcase, failure_tag)
           end
         end
 
@@ -82,9 +99,9 @@ module Minitest
         # Output according to Gitlab format
         # https://docs.gitlab.com/ee/ci/testing/unit_test_reports.html#view-junit-screenshots-on-gitlab
         if result.respond_to?("metadata") && result.metadata[:failure_screenshot_path]
-          screenshot = Ox::Element.new("system-out")
-          screenshot << "[[ATTACHMENT|#{result.metadata[:failure_screenshot_path]}]]"
-          testcase << screenshot
+          screenshot = @doc.element("system-out")
+          @doc.add_text(screenshot, "[[ATTACHMENT|#{result.metadata[:failure_screenshot_path]}]]")
+          @doc.add_child(testcase, screenshot)
         end
 
         testcase
