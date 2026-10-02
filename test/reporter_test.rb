@@ -19,6 +19,17 @@ class ReporterTest < Minitest::Test
     )
   end
 
+  def test_runs_inside_a_composite_reporter
+    reporter = create_reporter
+    composite = Minitest::CompositeReporter.new reporter
+
+    composite.prerecord FakeTestName, 'test_name'
+    composite.record create_test_result
+    composite.report
+
+    assert_match(/tests="1"/, reporter.output)
+  end
+
   # NOTE: This test will generate a temp file: "test/tmp/report.xml"
   def test_encoding
     # Enforce File.external_encoding to UTF-8 to ensure that ASCII character will be correctly converted to UTF-8

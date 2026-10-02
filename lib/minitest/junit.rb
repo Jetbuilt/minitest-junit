@@ -29,8 +29,9 @@ module Minitest
                end
 
     # :nodoc:
-    class Reporter
+    class Reporter < Minitest::AbstractReporter
       def initialize(io, options)
+        super()
         @io = io
         @results = []
         @options = options
@@ -38,12 +39,6 @@ module Minitest
         @options[:hostname] = options.fetch(:hostname, Socket.gethostname)
         @doc = Document.new
       end
-
-      def passed?
-        true
-      end
-
-      def start; end
 
       def record(result)
         @results << result
